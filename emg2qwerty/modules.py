@@ -278,3 +278,79 @@ class TDSConvEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.tds_conv_blocks(inputs)  # (T, N, num_features)
+    
+import torchvision.models as models
+
+# class ResNetEncoder(nn.Module):
+#     def __init__(
+#         self,
+#         num_features: int,
+#     ) -> None:
+#         super().__init__()
+
+#         self.num_features = num_features
+#         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         resnet18 = models.resnet18(pretrained=True)
+#         for param in resnet18.parameters():
+#             param.requires_grad = False
+#         self.linear = nn.Linear(num_features,28*28)
+#         self.frozen_resnet = resnet18.layer3.to(device)
+#         self.transfer = nn.Sequential(
+#             nn.Conv2d(in_channels=1, out_channels=128, kernel_size=3, stride=1, padding=1),
+#             self.frozen_resnet,
+#             nn.Conv2d(in_channels=256, out_channels=1, kernel_size=1, stride=1, padding=0),
+#         )
+
+#     def forward(self, inputs: torch.Tensor) -> torch.Tensor:  
+#         T, N, _ = inputs.shape  # Get batch dimensions
+#         x = self.linear(inputs)  # (T, N, 28*28)
+        
+#         x = x.view(T * N, 1, 28, 28)  # Equivalent to Flatten(0,1) then Unflatten(1, (1,28,28))
+        
+#         x = self.transfer(x)
+        
+#         x = x.view(T, N, -1)
+        
+#         return x
+
+
+import torch
+import torch.nn as nn
+import torchvision.models as models
+
+class ResNetEncoder(nn.Module):
+    def __init__(self, num_features: int) -> None:
+        super().__init__()
+
+        self.num_features = num_features
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Load pre-trained ResNet18 and freeze its parameters
+        resnet18 = models.resnet18(pretrained=True)
+        for param in resnet18.parameters():
+            param.requires_grad = False  # Freezing all layers
+
+        # Extract layer3 and put it in inference mode
+        self.frozen_resnet = resnet18.layer3.to(device).eval()
+
+        # Fully connected layer for input transformation
+        self.linear = nn.Linear(num_features, 28 * 28, device=device)
+
+        # Convolutional layers
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=128, kernel_size=3, stride=1, padding=1, device=device)
+        self.conv2 = nn.Conv2d(in_channels=256, out_channels=1, kernel_size=1, stride=1, padding=0, device=device)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        T, N, _ = inputs.shape  # (Time, Batch, Features)
+
+        x = self.linear(inputs)  # (T, N, 28*28)
+        x = x.view(T * N, 1, 28, 28)  # Reshape to (Batch, Channels, Height, Width)
+
+        # Run frozen ResNet without tracking gradients
+        with torch.no_grad():
+            x = self.conv1(x)
+            x = self.frozen_resnet(x)
+
+        x = self.conv2(x)
+
+        return x.view(T, N, -1)  # Reshape back to (T, N, Features)
